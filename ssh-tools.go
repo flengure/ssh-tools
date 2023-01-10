@@ -10,6 +10,7 @@ package main
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
@@ -33,15 +34,15 @@ import (
 var Client ssh.Client
 var Session ssh.Session
 
-func pathExists(path string) (bool, error) {
+func pathExists(path string) bool {
 	_, err := os.Stat(path)
 	if err == nil {
-		return true, nil
+		return true
 	}
 	if os.IsNotExist(err) {
-		return false, nil
+		return false
 	}
-	return false, err
+	return false
 }
 
 type SSHConfigData struct {
@@ -51,6 +52,7 @@ type SSHConfigData struct {
 	Port int    `json:"port,omitempty"`
 	User string `json:"user,omitempty"`
 	Pswd string `json:"pswd,omitempty"`
+	PKey string `json:"pkey,omitempty"`
 }
 
 func generateSSHKeys(dir string) error {
@@ -122,22 +124,14 @@ func getSSHKeys(dir string) (ssh.Signer, string, error) {
 	privateKeyFile := filepath.Join(dir, "id_ed25519")
 	publicKeyFile := filepath.Join(dir, "id_ed25519.pub")
 
-	isPathExisting, err := pathExists(privateKeyFile)
-	if err != nil {
-		return nil, "", err
-	}
-	if !isPathExisting {
-		err = generateSSHKeys(dir)
+	if !pathExists(privateKeyFile) {
+		err := generateSSHKeys(dir)
 		if err != nil {
 			return nil, "", err
 		}
 	}
 
-	isPathExisting, err = pathExists(publicKeyFile)
-	if err != nil {
-		return nil, "", err
-	}
-	if !isPathExisting {
+	if !pathExists(publicKeyFile) {
 		ssh_keygen, err := exec.LookPath("ssh-keygen")
 		if err != nil {
 			log.Println("Could not find ssh-keygen")
@@ -170,9 +164,7 @@ func getSSHKeys(dir string) (ssh.Signer, string, error) {
 	return signer, publicKey, nil
 }
 
-func sshSession(u, h, p string) (
-	*ssh.Client, *ssh.Session, error,
-) {
+func sshClient(u, h, p string) (*ssh.Client, error) {
 
 	var user = u
 	var host = h
@@ -209,9 +201,9 @@ func sshSession(u, h, p string) (
 
 	sess, err := client.NewSession()
 	if err != nil {
-		client.Close()
-		return nil, nil, err
+		return nil, err
 	}
+	defer sess.Close()
 
 	sess.Stdout = os.Stdout
 	sess.Stderr = os.Stderr
@@ -220,16 +212,7 @@ func sshSession(u, h, p string) (
 	if err != nil {
 		log.Fatal(err)
 	}
-
-	sess.Close()
-
-	sess1, err := client.NewSession()
-	if err != nil {
-		client.Close()
-		return nil, nil, err
-	}
-	// sess, _ := Client.NewSession()
-	return client, sess1, nil
+	return client, nil
 }
 
 type SSHConfigForm struct {
@@ -350,6 +333,7 @@ type SSHConfigViewer struct {
 
 type SSHConfigEntry struct {
 	hostEntry     *widget.Entry
+	pswdEntry     *widget.Entry
 	connectButton *widget.Button
 	statusLabel   *widget.Label
 	progressBar   *widget.ProgressBarInfinite
@@ -363,8 +347,6 @@ type SSHConfig struct {
 	onOk      func()
 	entry     *SSHConfigEntry
 	onConnect func()
-	client    *ssh.Client
-	session   *ssh.Session
 }
 
 func (c *SSHConfig) Name() string {
@@ -463,30 +445,32 @@ func (c *SSHConfig) notConnected() {
 	c.entry.viewer.menu.Disable()
 	c.entry.viewer.textArea.Disable()
 }
-func (c *SSHConfig) ProcessStart() {
-	c.entry.statusLabel.SetText("Status ...")
+func (c *SSHConfig) ProcessStart(s string) {
+	c.entry.statusLabel.SetText(s)
 	c.entry.statusLabel.Hidden = true
 	c.entry.progressBar.Hidden = false
 }
-func (c *SSHConfig) ProcessEnd() {
+func (c *SSHConfig) ProcessEnd(s string) {
+	c.entry.statusLabel.SetText(s)
 	c.entry.statusLabel.Hidden = false
 	c.entry.progressBar.Hidden = true
 }
 
-func (c *SSHConfig) Connect() (*ssh.Client, *ssh.Session, error) {
+func (c *SSHConfig) Connect() (*ssh.Client, error) {
 
-	client, sess, err := sshSession(
+	client, err := sshClient(
 		c.data.User,
 		c.data.Host+":"+strconv.Itoa(c.data.Port),
 		c.data.Pswd,
 	)
-	return client, sess, err
+	return client, err
 }
 
 func (c *SSHConfig) Entry() *fyne.Container {
 
 	c.entry = &SSHConfigEntry{
 		hostEntry:     widget.NewEntry(),
+		pswdEntry:     widget.NewPasswordEntry(),
 		connectButton: widget.NewButton("Connect", c.onConnect),
 		statusLabel:   widget.NewLabel("status..."),
 		progressBar:   widget.NewProgressBarInfinite(),
@@ -500,11 +484,12 @@ func (c *SSHConfig) Entry() *fyne.Container {
 			textArea: widget.NewMultiLineEntry(),
 		},
 	}
+	c.entry.hostEntry.PlaceHolder = "user@host:port"
 	c.entry.hostEntry.Text = c.data.User + "@" + c.data.Host
 	if c.data.Port != 22 && c.data.Port != 0 {
 		c.entry.hostEntry.Text += ":" + strconv.Itoa(c.data.Port)
 	}
-	c.entry.hostEntry.OnSubmitted = func(s string) {
+	c.entry.hostEntry.OnChanged = func(s string) {
 		var h string
 		m1 := regexp.MustCompile(`^(.*)@(.*)$`)
 		m2 := regexp.MustCompile(`^(.*):(.*)$`)
@@ -518,97 +503,143 @@ func (c *SSHConfig) Entry() *fyne.Container {
 			c.data.Port = 22
 		}
 	}
-	c.entry.connectButton.OnTapped = func() {
-		c.entry.statusLabel.SetText("connecting to " + c.entry.hostEntry.Text + "...")
-		c.ProcessStart()
-		client, sess, err := c.Connect()
-		if err != nil {
-			c.entry.statusLabel.SetText("Could not connect to " + c.entry.hostEntry.Text + err.Error())
-			c.notConnected()
-		} else {
-			Client, Session = *client, *sess
-			c.entry.statusLabel.SetText("successfully connected to " + c.entry.hostEntry.Text)
-			c.Connected()
-		}
-		c.ProcessEnd()
-	}
-	c.entry.editor.menu.OnChanged = func(s string) {
-		c.ProcessStart()
-		f := edit_list.path(s)
-		sess, _ := Client.NewSession()
-		result, err := sess.Output("cat \"" + f + "\"")
-		if err != nil {
-			c.entry.statusLabel.SetText("failed reading " + f + ": " + err.Error())
-		} else {
-			c.entry.editor.textArea.SetText(string(result))
-			c.entry.statusLabel.SetText("successfully read " + f)
-		}
-		sess.Close()
-		c.ProcessEnd()
-	}
-	c.entry.editor.saveButton.OnTapped = func() {
-		c.ProcessStart()
-		fil := edit_list.path(c.entry.editor.menu.Selected)
-		cmd := edit_list.cmd(c.entry.editor.menu.Selected)
-		sess, err := Client.NewSession()
-		if err != nil {
-			c.entry.statusLabel.SetText(fmt.Sprintf("unable to start session: %s", err.Error()))
-			c.ProcessEnd()
-			return
-		}
-		w, err := sess.StdinPipe()
-		if err != nil {
-			c.entry.statusLabel.SetText(fmt.Sprintf("unable to open StdinPipe: %s", err.Error()))
-			c.ProcessEnd()
-			return
-		}
-		err = sess.Start("cat > \"" + fil + "\"")
-		if err != nil {
-			c.entry.statusLabel.SetText(fmt.Sprintf("unable to start session: %s", err.Error()))
-			c.ProcessEnd()
-			return
-		}
-		i, err := w.Write([]byte(c.entry.editor.textArea.Text + "\n"))
-		if err != nil {
-			c.entry.statusLabel.SetText(fmt.Sprintf("could not write to StdinPipe: %s", err.Error()))
-			c.ProcessEnd()
-			return
-		}
-		fmt.Println(i)
-		sess.Close()
-		c.entry.statusLabel.SetText(fmt.Sprintf("successfully saved \"%s\"", fil))
 
-		sess1, err := Client.NewSession()
+	c.entry.pswdEntry.PlaceHolder = "Password"
+	c.entry.pswdEntry.OnChanged = func(s string) { c.data.Pswd = s }
+
+	c.entry.connectButton.OnTapped = func() {
+		c.ProcessStart(fmt.Sprintf("connecting to \"%s\"...", c.entry.hostEntry.Text))
+		sshClientConfig := &ssh.ClientConfig{
+			User: c.data.User,
+			Auth: []ssh.AuthMethod{
+				ssh.Password(c.data.Pswd),
+			},
+			HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		}
+		if c.data.PKey == "" || !pathExists(c.data.PKey) {
+			// home directory
+			home_path, err := os.UserHomeDir()
+			if err == nil {
+				// local .ssh path
+				ssh_path := filepath.Join(home_path, ".ssh")
+				signer, _, err := getSSHKeys(ssh_path)
+				if err == nil {
+					sshClientConfig.Auth = []ssh.AuthMethod{
+						ssh.PublicKeys(signer),
+						ssh.Password(c.data.Pswd),
+					}
+					c.data.PKey = filepath.Join(ssh_path, "id_25519")
+				}
+			}
+		}
+
+		// Connect to the remote server and perform the SSH handshake.
+
+		fmt.Println(c.data.Host)
+		fmt.Println(c.data.Port)
+		fmt.Printf("%s:%s", c.data.Host, strconv.Itoa(c.data.Port))
+		client, err := ssh.Dial("tcp", fmt.Sprintf("%s:%s", c.data.Host, strconv.Itoa(c.data.Port)), sshClientConfig)
 		if err != nil {
-			c.entry.statusLabel.SetText(fmt.Sprintf("could not create session: %s", err.Error()))
-			c.ProcessEnd()
+			c.ProcessEnd(fmt.Sprintf("could not dial to \"%s\"", c.entry.hostEntry.Text))
 			return
 		}
-		result, err := sess1.Output(fmt.Sprintf("\"%s\"", cmd))
+
+		Client = *client
+
+		sess, err := client.NewSession()
+		if err == nil {
+			defer sess.Close()
+			// home directory
+			home_path, err := os.UserHomeDir()
+			if err == nil {
+				// local .ssh path
+				ssh_path := filepath.Join(home_path, ".ssh")
+				_, publicKey, err := getSSHKeys(ssh_path)
+				if err == nil {
+					sess.Stdout = os.Stdout
+					sess.Stderr = os.Stderr
+					err = sess.Run(authorizedKeysCommand(publicKey))
+					if err != nil {
+						c.ProcessEnd("could not not update authorized keys")
+					}
+				}
+			}
+		}
+		c.Connected()
+		c.ProcessEnd(fmt.Sprintf("successfully connected to \"%s\"", c.entry.hostEntry.Text))
+	}
+
+	c.entry.editor.menu.OnChanged = func(s string) {
+		fil := edit_list.path(s)
+		c.ProcessStart(fmt.Sprintf("reading \"%s\"...", fil))
+		sess, _ := Client.NewSession()
+		result, err := sess.Output(fmt.Sprintf("cat \"%s\"", fil))
 		if err != nil {
-			c.entry.statusLabel.SetText(fmt.Sprintf("failed running \"%s\": %s", cmd, err.Error()))
-			c.ProcessEnd()
+			c.ProcessEnd(fmt.Sprintf("failed reading \"%s\": %s", fil, err.Error()))
 			return
 		}
 		c.entry.editor.textArea.SetText(string(result))
-		c.entry.statusLabel.SetText(fmt.Sprintf("successfully saved \"%s\" and ran \"%s\"", fil, cmd))
-		sess1.Close()
-		c.ProcessEnd()
+		sess.Close()
+		c.ProcessEnd(fmt.Sprintf("successfully read \"%s\"", fil))
+	}
+	c.entry.editor.saveButton.OnTapped = func() {
+		c.ProcessStart("Saving...")
+		fil := edit_list.path(c.entry.editor.menu.Selected)
+		cmd := edit_list.cmd(c.entry.editor.menu.Selected)
+		sess1, err := Client.NewSession()
+		if err != nil {
+			c.ProcessEnd(fmt.Sprintf("unable to start session: %s", err.Error()))
+			return
+		}
+		defer sess1.Close()
+		w, err := sess1.StdinPipe()
+		if err != nil {
+			c.ProcessEnd(fmt.Sprintf("unable to open StdinPipe: %s", err.Error()))
+			return
+		}
+		defer w.Close()
+		err = sess1.Start(fmt.Sprintf("cat > \"%s\"", fil))
+		if err != nil {
+			c.ProcessEnd(fmt.Sprintf("unable to start session: %s", err.Error()))
+			return
+		}
+		// i, err := w.Write([]byte(c.entry.editor.textArea.Text))
+		i, err := fmt.Fprintf(w, c.entry.editor.textArea.Text)
+		if err != nil {
+			c.ProcessEnd(fmt.Sprintf("could not write to StdinPipe: %s", err.Error()))
+			return
+		}
+		fmt.Println(i)
+		c.entry.statusLabel.SetText(fmt.Sprintf("successfully saved \"%s\"", fil))
+
+		sess2, err := Client.NewSession()
+		if err != nil {
+			c.ProcessEnd(fmt.Sprintf("could not create session: %s", err.Error()))
+			return
+		}
+		defer sess2.Close()
+		sess2.Stdout = os.Stdout
+		sess2.Stderr = os.Stderr
+		err = sess2.Run(cmd)
+		if err != nil {
+			c.ProcessEnd(fmt.Sprintf("failed running \"%s\": %s", cmd, err.Error()))
+			return
+		}
+		c.ProcessEnd(fmt.Sprintf("successfully saved \"%s\" and ran \"%s\"", fil, cmd))
 	}
 
 	c.entry.viewer.menu.OnChanged = func(s string) {
-		c.ProcessStart()
+		c.ProcessStart(fmt.Sprintf("running \"%s\"...", s))
 		cmd := view_list.cmd(s)
 		sess, _ := Client.NewSession()
 		result, err := sess.Output(cmd)
 		if err != nil {
-			c.entry.statusLabel.SetText("failed commands for " + s + ": " + err.Error())
-		} else {
-			c.entry.viewer.textArea.SetText(string(result))
-			c.entry.statusLabel.SetText("successfully ran commands for " + s)
+			c.ProcessEnd(fmt.Sprintf("failed commands for \"%s\": %s", s, err.Error()))
+			return
 		}
+		c.entry.viewer.textArea.SetText(string(result))
 		sess.Close()
-		c.ProcessEnd()
+		c.ProcessEnd(fmt.Sprintf("successfully ran commands for \"%s\"", s))
 	}
 
 	c.entry.progressBar.Hidden = true
@@ -617,7 +648,7 @@ func (c *SSHConfig) Entry() *fyne.Container {
 	c.entry.viewer.textArea.TextStyle = fyne.TextStyle{Monospace: true}
 	c.notConnected()
 
-	topSection := container.NewGridWithColumns(3, c.entry.hostEntry, layout.NewSpacer(), c.entry.connectButton)
+	topSection := container.NewGridWithColumns(3, c.entry.hostEntry, c.entry.pswdEntry, c.entry.connectButton)
 	bottomSection := container.NewMax(c.entry.statusLabel, c.entry.progressBar)
 	editorHeader := container.NewGridWithColumns(3, c.entry.editor.menu, layout.NewSpacer(), c.entry.editor.saveButton)
 	viewerHeader := container.NewGridWithColumns(3, c.entry.viewer.menu, layout.NewSpacer(), layout.NewSpacer())
@@ -641,8 +672,6 @@ func main() {
 		func() {},
 		&SSHConfigEntry{},
 		func() {},
-		nil,
-		nil,
 	}
 	sshConf.User("root")
 	sshConf.Host("10.72.19.10")
