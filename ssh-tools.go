@@ -1,3 +1,10 @@
+/*
+Enables ssh private key authentication for the target server
+Generate a new ed25519 private key if the user does not have one
+and add the corresponding public key to the target servers
+authorized hosts file if it does not exist
+*/
+
 package main
 
 import (
@@ -16,6 +23,7 @@ import (
 	"strings"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
@@ -456,6 +464,7 @@ func (c *SSHConfig) notConnected() {
 	c.entry.viewer.textArea.Disable()
 }
 func (c *SSHConfig) ProcessStart() {
+	c.entry.statusLabel.SetText("Status ...")
 	c.entry.statusLabel.Hidden = true
 	c.entry.progressBar.Hidden = false
 }
@@ -539,15 +548,54 @@ func (c *SSHConfig) Entry() *fyne.Container {
 	}
 	c.entry.editor.saveButton.OnTapped = func() {
 		c.ProcessStart()
-		sess, _ := Client.NewSession()
-		w, _ := sess.StdinPipe()
-		f := edit_list.path(c.entry.editor.menu.Selected)
-		sess.Start("cat > \"" + f + "\"")
-		w.Write([]byte(c.entry.editor.textArea.Text))
+		fil := edit_list.path(c.entry.editor.menu.Selected)
+		cmd := edit_list.cmd(c.entry.editor.menu.Selected)
+		sess, err := Client.NewSession()
+		if err != nil {
+			c.entry.statusLabel.SetText(fmt.Sprintf("unable to start session: %s", err.Error()))
+			c.ProcessEnd()
+			return
+		}
+		w, err := sess.StdinPipe()
+		if err != nil {
+			c.entry.statusLabel.SetText(fmt.Sprintf("unable to open StdinPipe: %s", err.Error()))
+			c.ProcessEnd()
+			return
+		}
+		err = sess.Start("cat > \"" + fil + "\"")
+		if err != nil {
+			c.entry.statusLabel.SetText(fmt.Sprintf("unable to start session: %s", err.Error()))
+			c.ProcessEnd()
+			return
+		}
+		i, err := w.Write([]byte(c.entry.editor.textArea.Text + "\n"))
+		if err != nil {
+			c.entry.statusLabel.SetText(fmt.Sprintf("could not write to StdinPipe: %s", err.Error()))
+			c.ProcessEnd()
+			return
+		}
+		fmt.Println(i)
 		sess.Close()
-		c.entry.statusLabel.SetText("successfully saved " + f)
+		c.entry.statusLabel.SetText(fmt.Sprintf("successfully saved \"%s\"", fil))
+
+		sess1, err := Client.NewSession()
+		if err != nil {
+			c.entry.statusLabel.SetText(fmt.Sprintf("could not create session: %s", err.Error()))
+			c.ProcessEnd()
+			return
+		}
+		result, err := sess1.Output(fmt.Sprintf("\"%s\"", cmd))
+		if err != nil {
+			c.entry.statusLabel.SetText(fmt.Sprintf("failed running \"%s\": %s", cmd, err.Error()))
+			c.ProcessEnd()
+			return
+		}
+		c.entry.editor.textArea.SetText(string(result))
+		c.entry.statusLabel.SetText(fmt.Sprintf("successfully saved \"%s\" and ran \"%s\"", fil, cmd))
+		sess1.Close()
 		c.ProcessEnd()
 	}
+
 	c.entry.viewer.menu.OnChanged = func(s string) {
 		c.ProcessStart()
 		cmd := view_list.cmd(s)
@@ -562,6 +610,7 @@ func (c *SSHConfig) Entry() *fyne.Container {
 		sess.Close()
 		c.ProcessEnd()
 	}
+
 	c.entry.progressBar.Hidden = true
 	c.entry.statusLabel.Hidden = false
 	c.entry.editor.textArea.TextStyle = fyne.TextStyle{Monospace: true}
@@ -581,5 +630,32 @@ func (c *SSHConfig) Entry() *fyne.Container {
 	content := container.NewBorder(topSection, bottomSection, nil, nil, tabs)
 
 	return content
+
+}
+
+func main() {
+
+	var sshConf = SSHConfig{
+		&SSHConfigData{},
+		&SSHConfigForm{},
+		func() {},
+		&SSHConfigEntry{},
+		func() {},
+		nil,
+		nil,
+	}
+	sshConf.User("root")
+	sshConf.Host("10.72.19.10")
+	sshConf.Port(22)
+	sshConf.Pswd("M8jm7@xw4cp")
+
+	myApp := app.New()
+	myWindow := myApp.NewWindow("ssh tools")
+	myWindow.Resize(fyne.NewSize(660, 600))
+
+	content := sshConf.Entry()
+
+	myWindow.SetContent(content)
+	myWindow.ShowAndRun()
 
 }
