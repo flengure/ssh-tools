@@ -490,17 +490,24 @@ func (c *SSHConfig) Entry() *fyne.Container {
 		c.entry.hostEntry.Text += ":" + strconv.Itoa(c.data.Port)
 	}
 	c.entry.hostEntry.OnChanged = func(s string) {
+		var u string
 		var h string
+		var p int
 		m1 := regexp.MustCompile(`^(.*)@(.*)$`)
 		m2 := regexp.MustCompile(`^(.*):(.*)$`)
-		c.data.User, h = m1.ReplaceAllString(s, "$1"), m1.ReplaceAllString(s, "$2")
-		c.data.Host = m2.ReplaceAllString(h, "$1")
-		c.data.Port, _ = strconv.Atoi(m2.ReplaceAllString(h, "$2"))
-		if c.data.User == "" {
-			c.data.User = "root"
+		u, h = m1.ReplaceAllString(s, "$1"), m1.ReplaceAllString(s, "$2")
+		h = m2.ReplaceAllString(h, "$1")
+		p, _ = strconv.Atoi(m2.ReplaceAllString(h, "$2"))
+		if u == "" {
+			u = "root"
 		}
-		if c.data.Port < 1 || c.data.Port > 65535 {
-			c.data.Port = 22
+		if p < 1 || p > 65535 {
+			p = 22
+		}
+		if u != c.data.User || h != c.data.Host || p != c.data.Port {
+			c.data.User = u
+			c.data.Host = h
+			c.data.Port = p
 		}
 	}
 
@@ -509,6 +516,7 @@ func (c *SSHConfig) Entry() *fyne.Container {
 
 	c.entry.connectButton.OnTapped = func() {
 		c.ProcessStart(fmt.Sprintf("connecting to \"%s\"...", c.entry.hostEntry.Text))
+
 		sshClientConfig := &ssh.ClientConfig{
 			User: c.data.User,
 			Auth: []ssh.AuthMethod{
