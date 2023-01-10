@@ -4,12 +4,16 @@ go 1.19
 
 require (
 	fyne.io/fyne/v2 v2.3.0
+	github.com/fyne-io/terminal v0.0.0-20221226191108-ca334b92c403
 	golang.org/x/crypto v0.5.0
 )
 
 require (
 	fyne.io/systray v1.10.1-0.20221115204952-d16a6177e6f1 // indirect
+	github.com/ActiveState/termtest/conpty v0.5.0 // indirect
+	github.com/Azure/go-ansiterm v0.0.0-20170929234023-d6e3b3328b78 // indirect
 	github.com/benoitkugler/textlayout v0.3.0 // indirect
+	github.com/creack/pty v1.1.11 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/fredbi/uri v0.1.0 // indirect
 	github.com/fsnotify/fsnotify v1.5.4 // indirect

@@ -28,6 +28,7 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
+	"github.com/fyne-io/terminal"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -324,6 +325,7 @@ type SSHConfigEditor struct {
 	menu       *widget.Select
 	saveButton *widget.Button
 	textArea   *widget.Entry
+	textLoaded string
 }
 
 type SSHConfigViewer struct {
@@ -331,22 +333,32 @@ type SSHConfigViewer struct {
 	textArea *widget.Entry
 }
 
+type SSHConfigRemote struct {
+	terminal *terminal.Terminal
+}
+type SSHConfigLocal struct {
+	terminal *terminal.Terminal
+}
 type SSHConfigEntry struct {
 	hostEntry     *widget.Entry
+	connectedHost string
 	pswdEntry     *widget.Entry
 	connectButton *widget.Button
 	statusLabel   *widget.Label
 	progressBar   *widget.ProgressBarInfinite
 	editor        *SSHConfigEditor
 	viewer        *SSHConfigViewer
+	remote        *SSHConfigRemote
+	local         *SSHConfigLocal
 }
 
 type SSHConfig struct {
-	data      *SSHConfigData
-	form      *SSHConfigForm
-	onOk      func()
-	entry     *SSHConfigEntry
-	onConnect func()
+	data       *SSHConfigData
+	form       *SSHConfigForm
+	onOk       func()
+	entry      *SSHConfigEntry
+	onConnect  func()
+	connection string
 }
 
 func (c *SSHConfig) Name() string {
@@ -432,17 +444,37 @@ func (c *SSHConfig) OnOk() {
 }
 
 func (c *SSHConfig) Connected() {
+	c.connection = c.entry.hostEntry.Text
+	c.entry.connectButton.Disable()
+	c.entry.connectButton.SetText("Connected to " + c.entry.hostEntry.Text)
 	c.entry.editor.menu.Enable()
-	c.entry.editor.saveButton.Enable()
-	c.entry.editor.textArea.Enable()
 	c.entry.viewer.menu.Enable()
-	c.entry.viewer.textArea.Enable()
+	// sess, err := Client.NewSession()
+	// if err == nil {
+	// 	in, _ := sess.StdinPipe()
+	// 	out, _ := sess.StdoutPipe()
+	// 	go sess.Run("$SHELL || bash")
+	// 	go func() {
+	// 		_ = c.entry.remote.terminal.RunWithConnection(in, out)
+	// 		// a.Quit()
+	// 	}()
+	// } else {
+	// 	c.entry.statusLabel.SetText("Unable to create session")
+	// }
+
 }
 func (c *SSHConfig) notConnected() {
+	c.connection = ""
+	c.entry.connectButton.Enable()
+	c.entry.connectButton.SetText("Connect")
+	c.entry.editor.menu.SetSelected("")
 	c.entry.editor.menu.Disable()
 	c.entry.editor.saveButton.Disable()
+	c.entry.editor.textArea.SetText("")
 	c.entry.editor.textArea.Disable()
+	c.entry.viewer.menu.SetSelected("")
 	c.entry.viewer.menu.Disable()
+	c.entry.viewer.textArea.SetText("")
 	c.entry.viewer.textArea.Disable()
 }
 func (c *SSHConfig) ProcessStart(s string) {
@@ -470,6 +502,7 @@ func (c *SSHConfig) Entry() *fyne.Container {
 
 	c.entry = &SSHConfigEntry{
 		hostEntry:     widget.NewEntry(),
+		connectedHost: "",
 		pswdEntry:     widget.NewPasswordEntry(),
 		connectButton: widget.NewButton("Connect", c.onConnect),
 		statusLabel:   widget.NewLabel("status..."),
@@ -478,10 +511,17 @@ func (c *SSHConfig) Entry() *fyne.Container {
 			menu:       widget.NewSelect(edit_list.names(), func(s string) {}),
 			saveButton: widget.NewButton("Save", func() {}),
 			textArea:   widget.NewMultiLineEntry(),
+			textLoaded: "",
 		},
 		viewer: &SSHConfigViewer{
 			menu:     widget.NewSelect(view_list.names(), func(s string) {}),
 			textArea: widget.NewMultiLineEntry(),
+		},
+		remote: &SSHConfigRemote{
+			terminal: terminal.New(),
+		},
+		local: &SSHConfigLocal{
+			terminal: terminal.New(),
 		},
 	}
 	c.entry.hostEntry.PlaceHolder = "user@host:port"
@@ -504,11 +544,16 @@ func (c *SSHConfig) Entry() *fyne.Container {
 		if p < 1 || p > 65535 {
 			p = 22
 		}
-		if u != c.data.User || h != c.data.Host || p != c.data.Port {
-			c.data.User = u
-			c.data.Host = h
-			c.data.Port = p
+		c.data.User = u
+		c.data.Host = h
+		c.data.Port = p
+		if s != c.entry.connectedHost || s == "" {
+			c.notConnected()
+
+		} else {
+			c.Connected()
 		}
+
 	}
 
 	c.entry.pswdEntry.PlaceHolder = "Password"
@@ -543,17 +588,30 @@ func (c *SSHConfig) Entry() *fyne.Container {
 
 		// Connect to the remote server and perform the SSH handshake.
 
-		fmt.Println(c.data.Host)
-		fmt.Println(c.data.Port)
-		fmt.Printf("%s:%s", c.data.Host, strconv.Itoa(c.data.Port))
-		client, err := ssh.Dial("tcp", fmt.Sprintf("%s:%s", c.data.Host, strconv.Itoa(c.data.Port)), sshClientConfig)
+		client, err := ssh.Dial("tcp", fmt.Sprintf(
+			"%s:%s", c.data.Host, strconv.Itoa(c.data.Port),
+		), sshClientConfig)
 		if err != nil {
-			c.ProcessEnd(fmt.Sprintf("could not dial to \"%s\"", c.entry.hostEntry.Text))
+			c.connection = ""
+			c.ProcessEnd(fmt.Sprintf(
+				"could not dial to \"%s\"", c.entry.hostEntry.Text,
+			))
 			return
 		}
-
+		c.connection = c.entry.hostEntry.Text
 		Client = *client
 
+		c.entry.connectedHost = c.entry.hostEntry.Text
+		c.Connected()
+		c.ProcessEnd(fmt.Sprintf(
+			"successfully connected to \"%s\"", c.entry.hostEntry.Text,
+		))
+
+		/* Write the public key associated with the private key that made
+		this successful connection to the authorized_keys file of the remote
+		server.
+		Will do both ~/.ssh/authorized_keys and /etc/dropbear/authorized_keys
+		*/
 		sess, err := client.NewSession()
 		if err == nil {
 			defer sess.Close()
@@ -573,23 +631,30 @@ func (c *SSHConfig) Entry() *fyne.Container {
 				}
 			}
 		}
-		c.Connected()
-		c.ProcessEnd(fmt.Sprintf("successfully connected to \"%s\"", c.entry.hostEntry.Text))
 	}
 
 	c.entry.editor.menu.OnChanged = func(s string) {
 		fil := edit_list.path(s)
 		c.ProcessStart(fmt.Sprintf("reading \"%s\"...", fil))
-		sess, _ := Client.NewSession()
+		sess, err := Client.NewSession()
+		if err != nil {
+			c.ProcessEnd(fmt.Sprintf("unable to start session: %s", err.Error()))
+			return
+		}
+		defer sess.Close()
 		result, err := sess.Output(fmt.Sprintf("cat \"%s\"", fil))
 		if err != nil {
 			c.ProcessEnd(fmt.Sprintf("failed reading \"%s\": %s", fil, err.Error()))
 			return
 		}
-		c.entry.editor.textArea.SetText(string(result))
-		sess.Close()
+		c.entry.editor.textLoaded = string(result)
+		c.entry.editor.textArea.SetText(c.entry.editor.textLoaded)
+		// fmt.Println(c.entry.editor.text)
+		c.entry.editor.textArea.Enable()
+		// c.entry.editor.saveButton.Enable()
 		c.ProcessEnd(fmt.Sprintf("successfully read \"%s\"", fil))
 	}
+	c.entry.editor.saveButton.Disable()
 	c.entry.editor.saveButton.OnTapped = func() {
 		c.ProcessStart("Saving...")
 		fil := edit_list.path(c.entry.editor.menu.Selected)
@@ -618,6 +683,8 @@ func (c *SSHConfig) Entry() *fyne.Container {
 			return
 		}
 		fmt.Println(i)
+
+		c.entry.editor.textLoaded = c.entry.editor.textArea.Text
 		c.entry.statusLabel.SetText(fmt.Sprintf("successfully saved \"%s\"", fil))
 
 		sess2, err := Client.NewSession()
@@ -635,6 +702,13 @@ func (c *SSHConfig) Entry() *fyne.Container {
 		}
 		c.ProcessEnd(fmt.Sprintf("successfully saved \"%s\" and ran \"%s\"", fil, cmd))
 	}
+	c.entry.editor.textArea.OnChanged = func(s string) {
+		if s == c.entry.editor.textLoaded {
+			c.entry.editor.saveButton.Disable()
+		} else {
+			c.entry.editor.saveButton.Enable()
+		}
+	}
 
 	c.entry.viewer.menu.OnChanged = func(s string) {
 		c.ProcessStart(fmt.Sprintf("running \"%s\"...", s))
@@ -646,6 +720,7 @@ func (c *SSHConfig) Entry() *fyne.Container {
 			return
 		}
 		c.entry.viewer.textArea.SetText(string(result))
+		c.entry.viewer.textArea.Enable()
 		sess.Close()
 		c.ProcessEnd(fmt.Sprintf("successfully ran commands for \"%s\"", s))
 	}
@@ -654,7 +729,6 @@ func (c *SSHConfig) Entry() *fyne.Container {
 	c.entry.statusLabel.Hidden = false
 	c.entry.editor.textArea.TextStyle = fyne.TextStyle{Monospace: true}
 	c.entry.viewer.textArea.TextStyle = fyne.TextStyle{Monospace: true}
-	c.notConnected()
 
 	topSection := container.NewGridWithColumns(3, c.entry.hostEntry, c.entry.pswdEntry, c.entry.connectButton)
 	bottomSection := container.NewMax(c.entry.statusLabel, c.entry.progressBar)
@@ -665,8 +739,14 @@ func (c *SSHConfig) Entry() *fyne.Container {
 	tabs := container.NewAppTabs(
 		container.NewTabItem("Editor", editorContent),
 		container.NewTabItem("Viewer", viewerContent),
+		// container.NewTabItem("Remote", c.entry.remote.terminal),
+		// container.NewTabItem("local", c.entry.local.terminal),
 	)
 	content := container.NewBorder(topSection, bottomSection, nil, nil, tabs)
+
+	// go func() {
+	// 	_ = c.entry.local.terminal.RunLocalShell()
+	// }()
 
 	return content
 
@@ -680,11 +760,12 @@ func main() {
 		func() {},
 		&SSHConfigEntry{},
 		func() {},
+		"",
 	}
 	sshConf.User("root")
 	sshConf.Host("10.72.19.10")
 	sshConf.Port(22)
-	sshConf.Pswd("M8jm7@xw4cp")
+	sshConf.Pswd("")
 
 	myApp := app.New()
 	myWindow := myApp.NewWindow("ssh tools")
