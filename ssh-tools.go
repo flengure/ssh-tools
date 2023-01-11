@@ -8,16 +8,11 @@ authorized hosts file if it does not exist
 package main
 
 import (
-	"crypto/ed25519"
-	"crypto/rand"
-
 	"encoding/json"
-	"encoding/pem"
 	"fmt"
 	"log"
 	"os"
 	"os/exec"
-	"os/user"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -35,16 +30,12 @@ import (
 var Client ssh.Client
 var Session ssh.Session
 
-func pathExists(path string) bool {
-	_, err := os.Stat(path)
-	if err == nil {
-		return true
-	}
-	if os.IsNotExist(err) {
-		return false
-	}
-	return false
+type edit_item struct {
+	name string
+	path string
+	cmd  string
 }
+type edit_items []edit_item
 
 type SSHConfigData struct {
 	Name string `json:"name,omitempty"`
@@ -54,58 +45,6 @@ type SSHConfigData struct {
 	User string `json:"user,omitempty"`
 	Pswd string `json:"pswd,omitempty"`
 	PKey string `json:"pkey,omitempty"`
-}
-
-func generateSSHKeys(dir string) error {
-	var err error
-
-	currentUser, err := user.Current()
-	if err != nil {
-		return err
-	}
-
-	hostname, err := os.Hostname()
-	if err != nil {
-		return err
-	}
-
-	pubKey, privKey, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		return err
-	}
-
-	publicKey, err := ssh.NewPublicKey(pubKey)
-	if err != nil {
-		return err
-	}
-
-	pemKey := &pem.Block{
-		Type:  "OPENSSH PRIVATE KEY",
-		Bytes: MarshalED25519PrivateKey(privKey), // <- marshals ed25519 correctly
-	}
-
-	privateKey := pem.EncodeToMemory(pemKey)
-
-	authorizedKey := []byte(
-		fmt.Sprintf("%s %s@%s",
-			strings.TrimSuffix(string(ssh.MarshalAuthorizedKey(publicKey)), "\n"),
-			currentUser.Username,
-			hostname,
-		),
-	)
-
-	err = os.WriteFile(filepath.Join(dir, "id_ed25519"), privateKey, 0600)
-	if err != nil {
-		return err
-	}
-
-	err = os.WriteFile(filepath.Join(dir, "id_ed25519.pub"), authorizedKey, 0644)
-	if err != nil {
-		return err
-	}
-
-	return nil
-
 }
 
 func authorizedKeysCommand(publicKey string) string {
@@ -224,13 +163,6 @@ type SSHConfigForm struct {
 	pswdEntry *widget.Entry
 }
 
-type edit_item struct {
-	name string
-	path string
-	cmd  string
-}
-type edit_items []edit_item
-
 func (c *edit_items) names() []string {
 	var is []string
 	for _, i := range *c {
@@ -276,32 +208,7 @@ func (c *view_items) cmd(name string) string {
 	}
 	return ""
 }
-func listSetCmd(name string) string {
-	return fmt.Sprintf("%s%s%s%s%s%s%s%s",
-		"for i in ", name, "_ipv6 ", name, "_ipv4 ", name, "_mac; ",
-		"do nft list set inet fw4 $i; done;",
-	)
-}
-func listDNSCmd(name string) string {
-	return fmt.Sprintf("%s%s%s%s%s%s%s%s%s%s%s%s%s",
-		"for i in ", name, "_ipv6 ", name, "_ipv4;",
-		"do nft list set inet fw4 $i; done;",
-		"printf \"%s\n\" ", "\"cat /etc/dnsmasq.d/", name, ".conf\";",
-		"cat /etc/dnsmasq.d/", name, ".conf",
-	)
-}
 
-var arpCmd = func() string {
-	var sb strings.Builder
-	sb.WriteString("f='%-18s %-17s %-10s\\n'; ")
-	sb.WriteString("ip neigh show | ")
-	sb.WriteString("awk -v f=\"$f\" 'BEGIN{ ")
-	sb.WriteString("printf f, \"-----------------\", \"---------------\", \"---------\";")
-	sb.WriteString("printf f, \"Hardware Address\", \"IP Adress\", \"State\";")
-	sb.WriteString("printf f, \"-----------------\", \"---------------\", \"---------\"}")
-	sb.WriteString("!/FAILED|INCOMPLETE/{printf f, $5, $1, $6}'")
-	return sb.String()
-}()
 var edit_list = edit_items{
 	{"src_accept", aclPath + "/src_accept.txt", restartFirewallCommand},
 	{"src_reject", aclPath + "/src_reject.txt", restartFirewallCommand},
@@ -309,13 +216,6 @@ var edit_list = edit_items{
 	{"dest_reject", aclPath + "/dest_reject.txt", restartFirewallCommand},
 	{"authorized_keys", "/etc/dropbear/authorized_keys", ""},
 	{"hosts", "/etc/hosts", ""},
-}
-var view_list = view_items{
-	{"src_accept", listSetCmd("src_accept")},
-	{"src_reject", listSetCmd("src_reject")},
-	{"dest_accept", listDNSCmd("dest_accept")},
-	{"dest_reject", listDNSCmd("dest_reject")},
-	{"arp table", arpCmd},
 }
 
 const aclPath string = "/etc/firewall/user"
@@ -754,26 +654,22 @@ func (c *SSHConfig) Entry() *fyne.Container {
 
 func main() {
 
-	var sshConf = SSHConfig{
-		&SSHConfigData{},
-		&SSHConfigForm{},
-		func() {},
-		&SSHConfigEntry{},
-		func() {},
-		"",
-	}
-	sshConf.User("root")
-	sshConf.Host("10.72.19.10")
-	sshConf.Port(22)
-	sshConf.Pswd("")
-
 	myApp := app.New()
 	myWindow := myApp.NewWindow("ssh tools")
 	myWindow.Resize(fyne.NewSize(660, 600))
 
-	content := sshConf.Entry()
+	//content := sshConf.Entry()
 
-	myWindow.SetContent(content)
+	var sshConf = NewSSHTools()
+	sshConf.user = "root"
+	sshConf.host = "10.72.19.10:22"
+	sshConf.password.SetText("")
+
+	// fmt.Println(sshConf.password)
+	//	var test1 =
+	// content := testEditor.InitContainer()
+
+	myWindow.SetContent(sshConf.container)
 	myWindow.ShowAndRun()
 
 }
