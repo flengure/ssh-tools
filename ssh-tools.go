@@ -47,18 +47,6 @@ type SSHConfigData struct {
 	PKey string `json:"pkey,omitempty"`
 }
 
-func authorizedKeysCommand(publicKey string) string {
-	var sb strings.Builder
-	sb.WriteString("k='" + publicKey + "'; ")
-	sb.WriteString("for d in \"/etc/dropbear\" \"~/.ssh\"; do ")
-	sb.WriteString("f=\"$d/authorized_keys\"; ")
-	sb.WriteString("if [ -d \"$d\" ]; then ")
-	sb.WriteString("[ -f \"$f\" ] || echo \"$k\" >> \"$f\"; ")
-	sb.WriteString("grep -q \"$k\" \"$f\" || echo \"$k\" >> \"$f\"; ")
-	sb.WriteString("fi; done;")
-	return sb.String()
-}
-
 func getSSHKeys(dir string) (ssh.Signer, string, error) {
 
 	privateKeyFile := filepath.Join(dir, "id_ed25519")
