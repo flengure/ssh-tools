@@ -8,6 +8,8 @@ require (
 	golang.org/x/crypto v0.5.0
 )
 
+require github.com/povsister/scp v0.0.0-20210427074412-33febfd9f13e // indirect
+
 require (
 	fyne.io/systray v1.10.1-0.20221115204952-d16a6177e6f1 // indirect
 	github.com/ActiveState/termtest/conpty v0.5.0 // indirect

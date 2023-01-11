@@ -16,6 +16,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/widget"
+	"github.com/povsister/scp"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -91,6 +92,7 @@ type ssh_tools struct {
 	privateKey *widget.Entry
 	container  *fyne.Container
 	ssh        *ssh.Client
+	scp        *scp.Client
 	edit       *edit
 	view       *view
 	host       string
@@ -270,10 +272,16 @@ func (ui *ssh_tools) setNotConnected() {
 	ui.setUINotConnected()
 }
 
-func (ui *ssh_tools) setClient(s *ssh.Client) {
+func (ui *ssh_tools) setSSHClient(s *ssh.Client) {
 	ui.ssh = s
 	ui.edit.ssh = s
 	ui.view.ssh = s
+}
+
+func (ui *ssh_tools) setSCPClient(s *scp.Client) {
+	ui.scp = s
+	ui.edit.scp = s
+	ui.view.scp = s
 }
 
 func (ui *ssh_tools) authorizedKeys() string {
@@ -322,7 +330,8 @@ func (ui *ssh_tools) SSHConnect() {
 	}
 
 	// Connect to the remote server and perform the SSH handshake.
-	client, err := ssh.Dial("tcp", host, sshClientConfig)
+	//client, err := scp.NewClient(host, sshClientConfig, &scp.ClientOption{})
+	sshClient, err := ssh.Dial("tcp", host, sshClientConfig)
 	if err != nil {
 		ui.setNotConnected()
 		ui.edit.ProcessEnd(fmt.Sprintf(
@@ -330,8 +339,18 @@ func (ui *ssh_tools) SSHConnect() {
 		))
 		return
 	}
+	ui.setSSHClient(sshClient)
+
+	scpClient, err := scp.NewClientFromExistingSSH(sshClient, &scp.ClientOption{})
+	if err != nil {
+		ui.setNotConnected()
+		ui.edit.ProcessEnd(fmt.Sprintf(
+			"could not create scp client from existing ssh client",
+		))
+		return
+	}
+	ui.setSCPClient(scpClient)
 	ui.setConnected(ui.hostEntry.Text)
-	ui.setClient(client)
 	ui.setStatus(fmt.Sprintf(
 		"successfully connected as %s to %s", user, host,
 	))
@@ -363,13 +382,9 @@ func (ui *ssh_tools) SSHConnect() {
 			sess.Stderr = os.Stderr
 			err = sess.Run(ui.authorizedKeys())
 			if err != nil {
-				ui.setStatus(fmt.Sprintf(
-					"could not update the remote's authorized_keys",
-				))
+				ui.setStatus("could not update the remote's authorized_keys")
 			} else {
-				ui.setStatus(fmt.Sprintf(
-					"successfully updated the remote's authorized_keys",
-				))
+				ui.setStatus("successfully updated the remote's authorized_keys")
 			}
 		}
 	}

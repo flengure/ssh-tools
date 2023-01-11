@@ -8,6 +8,7 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
+	"github.com/povsister/scp"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/exp/maps"
 )
@@ -56,6 +57,7 @@ type view struct {
 	progress  *widget.ProgressBarInfinite
 	container *fyne.Container
 	ssh       *ssh.Client
+	scp       *scp.Client
 	list      map[string]string
 	text      string
 	err       error

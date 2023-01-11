@@ -3,11 +3,13 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
+	"github.com/povsister/scp"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/exp/maps"
 )
@@ -36,6 +38,7 @@ type edit struct {
 	progress  *widget.ProgressBarInfinite
 	container *fyne.Container
 	ssh       *ssh.Client
+	scp       *scp.Client
 	list      map[string]emi
 	connected string
 	text      string
@@ -93,8 +96,21 @@ func (ui *edit) getEdit(s string) {
 		)
 		return
 	}
+	// file was loaded successfully
 
-	// file was written successfully
+	// reader := strings.newwri(ui.view.Text)
+	// err := ui.scp.CopyToRemote(
+	// 	reader,
+	// 	ui.list[ui.menu.Selected].path,
+	// 	&scp.FileTransferOption{},
+	// )
+	// if err != nil {
+	// 	fmt.Println("scp did not work" + err.Error())
+	// 	ui.SetStatus("scp did not work" + err.Error())
+	// } else {
+	// 	ui.SetStatus("yay scp worked successfully")
+	// }
+
 	ui.text = string(result)
 	ui.view.SetText(ui.text)
 	ui.view.Enable()
@@ -115,47 +131,60 @@ func (ui *edit) saveEdit() {
 		return
 	}
 
-	// open a client connection
-	sess1, err := ui.ssh.NewSession()
-	if err != nil {
-		ui.err = err
-		ui.ProcessEnd("Failed to create session")
-		return
-	}
-	defer sess1.Close()
-	ui.SetStatus("New Session")
+	// // open a client connection
+	// sess1, err := ui.ssh.NewSession()
+	// if err != nil {
+	// 	ui.err = err
+	// 	ui.ProcessEnd("Failed to create session")
+	// 	return
+	// }
+	// defer sess1.Close()
+	// ui.SetStatus("New Session")
 
-	// stdin pipe
-	w, err := sess1.StdinPipe()
-	if err != nil {
-		ui.err = err
-		ui.ProcessEnd("unable to open StdinPipe")
-		return
-	}
-	ui.SetStatus("stdinPipe opened successfully")
-	defer w.Close()
+	// // stdin pipe
+	// w, err := sess1.StdinPipe()
+	// if err != nil {
+	// 	ui.err = err
+	// 	ui.ProcessEnd("unable to open StdinPipe")
+	// 	return
+	// }
+	// ui.SetStatus("stdinPipe opened successfully")
+	// defer w.Close()
 
-	// echo to remote file
-	err = sess1.Start(fmt.Sprintf(
-		"cat > \"%s\"",
-		ui.list[ui.menu.Selected].path),
+	// // echo to remote file
+	// err = sess1.Start(fmt.Sprintf(
+	// 	"cat > \"%s\"",
+	// 	ui.list[ui.menu.Selected].path),
+	// )
+	// if err != nil {
+	// 	ui.err = err
+	// 	ui.ProcessEnd("unable to stream buffer to remote file")
+	// 	return
+	// }
+
+	// // write the textentry contents to the pipe
+	// i, err := fmt.Fprintf(w, ui.view.Text)
+	// if err != nil {
+	// 	ui.err = err
+	// 	ui.ProcessEnd("could not write to StdinPipe")
+	// 	return
+	// }
+
+	// // what do I do with this ?
+	// fmt.Println(i)
+
+	reader := strings.NewReader(ui.view.Text)
+	err := ui.scp.CopyToRemote(
+		reader,
+		ui.list[ui.menu.Selected].path,
+		&scp.FileTransferOption{},
 	)
 	if err != nil {
-		ui.err = err
-		ui.ProcessEnd("unable to stream buffer to remote file")
-		return
+		fmt.Println("scp did not work" + err.Error())
+		ui.SetStatus("scp did not work" + err.Error())
+	} else {
+		ui.SetStatus("yay scp worked successfully")
 	}
-
-	// write the textentry contents to the pipe
-	i, err := fmt.Fprintf(w, ui.view.Text)
-	if err != nil {
-		ui.err = err
-		ui.ProcessEnd("could not write to StdinPipe")
-		return
-	}
-
-	// what do I do with this ?
-	fmt.Println(i)
 
 	ui.text = ui.view.Text
 
