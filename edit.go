@@ -221,8 +221,15 @@ func NewEdit() *edit {
 	ui.progress.Hidden = true
 	ui.status.Hidden = false
 
-	top := container.NewGridWithColumns(
-		3,
+	ui.view.OnChanged = func(s string) {
+		if s == ui.text {
+			ui.save.Disable()
+		} else {
+			ui.save.Enable()
+		}
+	}
+
+	top := container.NewGridWithColumns(3,
 		ui.menu, layout.NewSpacer(),
 		ui.save,
 	)

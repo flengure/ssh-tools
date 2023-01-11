@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -19,6 +18,19 @@ import (
 	"fyne.io/fyne/v2/widget"
 	"golang.org/x/crypto/ssh"
 )
+
+var UseSytemDefaultUsername = false
+var DefaultUsername = "root"
+var GetDefaultUsername = func() string {
+	if UseSytemDefaultUsername {
+		user, err := user.Current()
+		if err != nil {
+			return DefaultUsername
+		}
+		return user.Username
+	}
+	return DefaultUsername
+}()
 
 func generateSSHKeys(dir string) error {
 	var err error
@@ -81,7 +93,6 @@ type ssh_tools struct {
 	ssh        *ssh.Client
 	edit       *edit
 	view       *view
-	user       string
 	host       string
 	connected  string
 }
@@ -177,24 +188,47 @@ func (ui *ssh_tools) getSigner() (ssh.Signer, error) {
 	return signer, err
 }
 
-func (ui *ssh_tools) setHostEntry(s string) {
-	var u string
-	var h string
+func ParseHostEntry(s string) (string, string) {
+	var user string
+	var host string
+	var port string
 	var p int
-	// s := ui.hostEntry.Text
-	m1 := regexp.MustCompile(`^(.*)@(.*)$`)
-	m2 := regexp.MustCompile(`^(.*):(.*)$`)
-	u, h = m1.ReplaceAllString(s, "$1"), m1.ReplaceAllString(s, "$2")
-	h = m2.ReplaceAllString(h, "$1")
-	p, _ = strconv.Atoi(m2.ReplaceAllString(h, "$2"))
-	if u == "" {
-		u = "root"
+	var q []string
+	var r []string
+	q = strings.Split(s, "@")
+	if len(q) > 1 {
+		user = q[0]
+		host = strings.Join(q[1:], "")
+	} else if len(q) > 0 {
+		user = GetDefaultUsername
+		host = q[0]
+	} else {
+		user = GetDefaultUsername
+		host = "localhost"
+	}
+	r = strings.Split(host, ":")
+	if len(r) > 1 {
+		host = strings.Join(r[:len(r)-1], "")
+		port = r[len(r)-1]
+	} else if len(r) > 0 {
+		port = "22"
+	}
+	p, err := strconv.Atoi(port)
+	if err != nil {
+		p = 22
 	}
 	if p < 1 || p > 65535 {
 		p = 22
 	}
-	ui.user = u
-	ui.host = h + ":" + strconv.Itoa(p)
+	return user, host + ":" + strconv.Itoa(p)
+}
+
+func (ui *ssh_tools) SetHost(s string) {
+	ui.hostEntry.SetText(s)
+}
+
+func (ui *ssh_tools) SetPassword(s string) {
+	ui.password.SetText(s)
 }
 
 func (ui *ssh_tools) setStatus(s string) {
@@ -212,10 +246,28 @@ func (ui *ssh_tools) showProgress() {
 	ui.view.progress.Show()
 }
 
+func (ui *ssh_tools) setUIConnected() {
+	ui.connect.Disable()
+	ui.edit.menu.Enable()
+	ui.view.menu.Enable()
+}
 func (ui *ssh_tools) setConnected(s string) {
 	ui.connected = s
 	ui.edit.connected = s
 	ui.view.connected = s
+	ui.setUIConnected()
+}
+
+func (ui *ssh_tools) setUINotConnected() {
+	ui.connect.Enable()
+	ui.edit.menu.Disable()
+	ui.view.menu.Disable()
+}
+func (ui *ssh_tools) setNotConnected() {
+	ui.connected = ""
+	ui.edit.connected = ""
+	ui.view.connected = ""
+	ui.setUINotConnected()
 }
 
 func (ui *ssh_tools) setClient(s *ssh.Client) {
@@ -242,11 +294,15 @@ func (ui *ssh_tools) authorizedKeys() string {
 
 func (ui *ssh_tools) SSHConnect() {
 
-	ui.setStatus(fmt.Sprintf("connecting to %s as %s...", ui.host, ui.user))
-	ui.showProgress()
+	user, host := ParseHostEntry(ui.hostEntry.Text)
+
+	fmt.Println(ParseHostEntry(ui.hostEntry.Text))
+
+	fmt.Println(user, host)
+	ui.edit.ProcessStart(fmt.Sprintf("connecting to %s as %s...", host, user))
 
 	sshClientConfig := &ssh.ClientConfig{
-		User: ui.user,
+		User: user,
 		Auth: []ssh.AuthMethod{
 			ssh.Password(ui.password.Text),
 		},
@@ -266,19 +322,18 @@ func (ui *ssh_tools) SSHConnect() {
 	}
 
 	// Connect to the remote server and perform the SSH handshake.
-	client, err := ssh.Dial("tcp", ui.host, sshClientConfig)
+	client, err := ssh.Dial("tcp", host, sshClientConfig)
 	if err != nil {
-		ui.setConnected("")
-		ui.setStatus(fmt.Sprintf(
-			"could not dial out to \"%s\" as \"%s\"\n%s", ui.host, ui.user, err,
+		ui.setNotConnected()
+		ui.edit.ProcessEnd(fmt.Sprintf(
+			"could not dial out to \"%s\" as \"%s\"\n%s", host, user, err,
 		))
-		ui.hideProgress()
 		return
 	}
-	ui.setConnected(ui.host)
+	ui.setConnected(ui.hostEntry.Text)
 	ui.setClient(client)
 	ui.setStatus(fmt.Sprintf(
-		"successfully connected as %s to %s", ui.user, ui.host,
+		"successfully connected as %s to %s", user, host,
 	))
 
 	/* Write the public key associated with the private key that made
@@ -326,24 +381,33 @@ func NewSSHTools() ssh_tools {
 
 	ui := ssh_tools{
 		hostEntry:  widget.NewEntry(),
-		password:   widget.NewEntry(),
+		password:   widget.NewPasswordEntry(),
 		connect:    widget.NewButton("Connect", func() {}),
 		privateKey: widget.NewEntry(),
 		edit:       NewEdit(),
 		view:       NewView(),
-		user:       "root",
 	}
 
 	ui.hostEntry.SetText("root@10.72.19.10")
-	ui.setHostEntry(ui.hostEntry.Text)
-	ui.hostEntry.OnChanged = func(s string) { ui.setHostEntry(s) }
+	ui.hostEntry.OnChanged = func(s string) {
+		if ui.connected == "" {
+			ui.setUINotConnected()
+		} else {
+			if ui.connected != s {
+				ui.setUINotConnected()
+			} else {
+				ui.setUIConnected()
+			}
+		}
+	}
 	ui.hostEntry.PlaceHolder = "user@host:port"
 	ui.password.PlaceHolder = "password"
-	ui.connect.Enable()
+	ui.setNotConnected()
 	ui.connect.OnTapped = func() { ui.SSHConnect() }
 
-	top := container.NewGridWithColumns(
-		3,
+	fmt.Println(ParseHostEntry(ui.hostEntry.Text))
+
+	top := container.NewGridWithColumns(3,
 		ui.hostEntry,
 		ui.password,
 		ui.connect,

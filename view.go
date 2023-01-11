@@ -39,14 +39,6 @@ var arpCmd = func() string {
 	return sb.String()
 }()
 
-var view_list = view_items{
-	{"src_accept", listSetCmd("src_accept")},
-	{"src_reject", listSetCmd("src_reject")},
-	{"dest_accept", listDNSCmd("dest_accept")},
-	{"dest_reject", listDNSCmd("dest_reject")},
-	{"arp table", arpCmd},
-}
-
 func default_view_map() map[string]string {
 	m := make(map[string]string)
 	m["src_accept"] = listSetCmd("src_accept")
