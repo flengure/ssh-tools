@@ -224,6 +224,22 @@ func (ui *ssh_tools) setClient(s *ssh.Client) {
 	ui.view.ssh = s
 }
 
+func (ui *ssh_tools) authorizedKeys() string {
+	publicKey := ui.getPublicKey()
+	if publicKey == "" {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("k='" + publicKey + "'; ")
+	sb.WriteString("for d in \"/etc/dropbear\" \"~/.ssh\"; do ")
+	sb.WriteString("f=\"$d/authorized_keys\"; ")
+	sb.WriteString("if [ -d \"$d\" ]; then ")
+	sb.WriteString("[ -f \"$f\" ] || echo \"$k\" >> \"$f\"; ")
+	sb.WriteString("grep -q \"$k\" \"$f\" || echo \"$k\" >> \"$f\"; ")
+	sb.WriteString("fi; done;")
+	return sb.String()
+}
+
 func (ui *ssh_tools) SSHConnect() {
 
 	ui.setStatus(fmt.Sprintf("connecting to %s as %s...", ui.host, ui.user))
@@ -290,7 +306,7 @@ func (ui *ssh_tools) SSHConnect() {
 			defer sess.Close()
 			sess.Stdout = os.Stdout
 			sess.Stderr = os.Stderr
-			err = sess.Run(authorizedKeysCommand(public_key))
+			err = sess.Run(ui.authorizedKeys())
 			if err != nil {
 				ui.setStatus(fmt.Sprintf(
 					"could not update the remote's authorized_keys",

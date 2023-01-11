@@ -42,14 +42,29 @@ type edit struct {
 	err       error
 }
 
+func (ui *edit) SetStatus(s string) {
+	if s != "" {
+		ui.status.SetText(s)
+	}
+}
+
+func (ui *edit) ProcessStart(s string) {
+	ui.SetStatus(s)
+	ui.progress.Show()
+}
+
+func (ui *edit) ProcessEnd(s string) {
+	ui.SetStatus(s)
+	ui.progress.Hidden = true
+}
+
 func (ui *edit) getEdit(s string) {
 
-	ui.progress.Show()
+	ui.ProcessStart("Attempting to load remote file...")
 
 	// No host we probably have no client remember to set this
 	if ui.connected == "" {
-		ui.status.SetText("No ssh client")
-		ui.progress.Hide()
+		ui.ProcessEnd("No ssh client")
 		return
 	}
 
@@ -57,12 +72,11 @@ func (ui *edit) getEdit(s string) {
 	sess, err := ui.ssh.NewSession()
 	if err != nil {
 		ui.err = err
-		ui.status.SetText("Failed to create session")
-		ui.progress.Hide()
+		ui.ProcessEnd("Failed to create session")
 		return
 	}
 	defer sess.Close()
-	ui.status.SetText("New Session")
+	ui.SetStatus("New Session")
 
 	// run cat command
 	// cat filename
@@ -73,35 +87,31 @@ func (ui *edit) getEdit(s string) {
 	)
 	if err != nil {
 		ui.err = err
-		ui.status.SetText(fmt.Sprintf(
+		ui.ProcessEnd(fmt.Sprintf(
 			"failed: cat \"%s\"",
 			ui.list[s].path),
 		)
-		ui.progress.Hide()
 		return
 	}
 
 	// file was written successfully
-	ui.status.SetText(fmt.Sprintf(
-		"success: cat \"%s\"",
-		ui.list[s].path),
-	)
 	ui.text = string(result)
 	ui.view.SetText(ui.text)
 	ui.view.Enable()
 	ui.save.Disable()
-	ui.progress.Hide()
-	// ui.InitContainer()
+	ui.ProcessEnd(fmt.Sprintf(
+		"success: cat \"%s\"",
+		ui.list[s].path),
+	)
 }
 
 func (ui *edit) saveEdit() {
 
-	ui.progress.Show()
+	ui.ProcessStart("Attempting to save to remote file...")
 
 	// No host we probably have no client remember to set this
 	if ui.connected == "" {
-		ui.status.SetText("No ssh client")
-		ui.progress.Hide()
+		ui.ProcessEnd("No ssh client")
 		return
 	}
 
@@ -109,22 +119,20 @@ func (ui *edit) saveEdit() {
 	sess1, err := ui.ssh.NewSession()
 	if err != nil {
 		ui.err = err
-		ui.status.SetText("Failed to create session")
-		ui.progress.Hide()
+		ui.ProcessEnd("Failed to create session")
 		return
 	}
 	defer sess1.Close()
-	ui.status.SetText("New Session")
+	ui.SetStatus("New Session")
 
 	// stdin pipe
 	w, err := sess1.StdinPipe()
 	if err != nil {
 		ui.err = err
-		ui.status.SetText("unable to open StdinPipe")
-		ui.progress.Hide()
+		ui.ProcessEnd("unable to open StdinPipe")
 		return
 	}
-	ui.status.SetText("stdinPipe opened successfully")
+	ui.SetStatus("stdinPipe opened successfully")
 	defer w.Close()
 
 	// echo to remote file
@@ -134,8 +142,7 @@ func (ui *edit) saveEdit() {
 	)
 	if err != nil {
 		ui.err = err
-		ui.status.SetText("unable to stream buffer to remote file")
-		ui.progress.Hide()
+		ui.ProcessEnd("unable to stream buffer to remote file")
 		return
 	}
 
@@ -143,8 +150,7 @@ func (ui *edit) saveEdit() {
 	i, err := fmt.Fprintf(w, ui.view.Text)
 	if err != nil {
 		ui.err = err
-		ui.status.SetText("could not write to StdinPipe")
-		ui.progress.Hide()
+		ui.ProcessEnd("could not write to StdinPipe")
 		return
 	}
 
@@ -153,7 +159,7 @@ func (ui *edit) saveEdit() {
 
 	ui.text = ui.view.Text
 
-	ui.status.SetText(fmt.Sprintf(
+	ui.SetStatus(fmt.Sprintf(
 		"successfully saved \"%s\"",
 		ui.list[ui.menu.Selected].path,
 	))
@@ -164,12 +170,12 @@ func (ui *edit) saveEdit() {
 		sess2, err := ui.ssh.NewSession()
 		if err != nil {
 			ui.err = err
-			ui.status.SetText("Failed to create session")
+			ui.ProcessEnd("Failed to create session")
 			ui.progress.Hide()
 			return
 		}
 		defer sess2.Close()
-		ui.status.SetText("New Session")
+		ui.SetStatus("New Session")
 
 		sess2.Stdout = os.Stdout
 		sess2.Stderr = os.Stderr
@@ -178,14 +184,13 @@ func (ui *edit) saveEdit() {
 		err = sess2.Run(ui.list[ui.menu.Selected].cmd)
 		if err != nil {
 			ui.err = err
-			ui.status.SetText(fmt.Sprintf(
+			ui.ProcessEnd(fmt.Sprintf(
 				"failed running \"%s\"",
 				ui.list[ui.menu.Selected].cmd,
 			))
-			ui.progress.Hide()
 			return
 		}
-		ui.status.SetText(fmt.Sprintf(
+		ui.ProcessEnd(fmt.Sprintf(
 			"successfully saved \"%s\" and ran \"%s\"",
 			ui.list[ui.menu.Selected].path,
 			ui.list[ui.menu.Selected].cmd,

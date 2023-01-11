@@ -70,14 +70,29 @@ type view struct {
 	connected string
 }
 
+func (ui *view) SetStatus(s string) {
+	if s != "" {
+		ui.status.SetText(s)
+	}
+}
+
+func (ui *view) ProcessStart(s string) {
+	ui.SetStatus(s)
+	ui.progress.Show()
+}
+
+func (ui *view) ProcessEnd(s string) {
+	ui.SetStatus(s)
+	ui.progress.Hidden = true
+}
+
 func (ui *view) getView(s string) {
 
-	ui.progress.Show()
+	ui.ProcessStart("Attempting to run remote commands...")
 
 	// No host we probably have no client remember to set this
 	if ui.connected == "" {
-		ui.status.SetText("No ssh client")
-		ui.progress.Hide()
+		ui.ProcessEnd("No ssh client")
 		return
 	}
 
@@ -85,33 +100,27 @@ func (ui *view) getView(s string) {
 	sess, err := ui.ssh.NewSession()
 	if err != nil {
 		ui.err = err
-		ui.status.SetText("Failed to create session")
-		ui.progress.Hide()
+		ui.ProcessEnd("Failed to create session")
 		return
 	}
 	defer sess.Close()
-	ui.status.SetText("New Session")
+	ui.SetStatus("New Session")
 
-	// run cat command
-	// cat filename
-	// where filename is e.list[s]
 	result, err := sess.Output(ui.list[s])
 	if err != nil {
 		ui.err = err
-		ui.status.SetText(fmt.Sprintf(
+		ui.ProcessEnd(fmt.Sprintf(
 			"failed: \"%s\"",
 			ui.list[s]),
 		)
-		ui.progress.Hide()
 		return
 	}
 
 	// command was successfully execute
-	ui.status.SetText(fmt.Sprintf("success: \"%s\"", s))
 	ui.text = string(result)
 	ui.view.SetText(ui.text)
 	ui.view.Enable()
-	ui.progress.Hide()
+	ui.ProcessEnd(fmt.Sprintf("success: %s", s))
 }
 
 func NewView() *view {
@@ -132,10 +141,8 @@ func NewView() *view {
 	ui.progress.Hidden = true
 	ui.status.Hidden = false
 
-	top := container.NewGridWithColumns(
-		3,
-		ui.menu, layout.NewSpacer(), layout.NewSpacer(),
-	)
+	top := container.NewGridWithColumns(3,
+		ui.menu, layout.NewSpacer(), layout.NewSpacer())
 	bottom := container.NewMax(ui.status, ui.progress)
 
 	ui.container = container.NewBorder(top, bottom, nil, nil, ui.view)
