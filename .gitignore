@@ -63,4 +63,5 @@ bin/
 lib/
 include
 .vscode
+.vscode/
 .gitignore
