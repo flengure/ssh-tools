@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -8,8 +9,6 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
-	"github.com/povsister/scp"
-	"golang.org/x/crypto/ssh"
 	"golang.org/x/exp/maps"
 )
 
@@ -50,86 +49,83 @@ func default_view_map() map[string]string {
 	return m
 }
 
-type view struct {
+type view_ui struct {
 	menu      *widget.Select
 	view      *widget.Entry
 	status    *widget.Label
 	progress  *widget.ProgressBarInfinite
 	container *fyne.Container
-	ssh       *ssh.Client
-	scp       *scp.Client
+	conn      conn
 	list      map[string]string
-	text      string
 	err       error
-	connected string
 }
 
-func (ui *view) SetStatus(s string) {
+func (ui *view_ui) set_status(s string) {
 	if s != "" {
 		ui.status.SetText(s)
 	}
 }
 
-func (ui *view) ProcessStart(s string) {
-	ui.SetStatus(s)
+func (ui *view_ui) set_error(s string) {
+	ui.err = errors.New(s)
+	ui.status.SetText(s)
+}
+
+func (ui *view_ui) progress_show(s string) {
+	ui.set_status(s)
 	ui.progress.Show()
 }
 
-func (ui *view) ProcessEnd(s string) {
-	ui.SetStatus(s)
-	ui.progress.Hidden = true
+func (ui *view_ui) progress_hide(s string) {
+	ui.set_status(s)
+	ui.progress.Hide()
 }
 
-func (ui *view) getView(s string) {
-
-	ui.ProcessStart("Attempting to run remote commands...")
-
-	// No host we probably have no client remember to set this
-	if ui.connected == "" {
-		ui.ProcessEnd("No ssh client")
-		return
-	}
-
-	// open a client connection
-	sess, err := ui.ssh.NewSession()
-	if err != nil {
-		ui.err = err
-		ui.ProcessEnd("Failed to create session")
-		return
-	}
-	defer sess.Close()
-	ui.SetStatus("New Session")
-
-	result, err := sess.Output(ui.list[s])
-	if err != nil {
-		ui.err = err
-		ui.ProcessEnd(fmt.Sprintf(
-			"failed: \"%s\"",
-			ui.list[s]),
-		)
-		return
-	}
-
-	// command was successfully execute
-	ui.text = string(result)
-	ui.view.SetText(ui.text)
-	ui.view.Enable()
-	ui.ProcessEnd(fmt.Sprintf("success: %s", s))
+func (ui *view_ui) no_sele() {
+	ui.view.Disable()
+	ui.progress.Hide()
 }
 
-func NewView() *view {
+func new_view_ui() *view_ui {
 
 	vm := default_view_map()
 
-	ui := &view{
+	ui := &view_ui{
 		menu:     widget.NewSelect(maps.Keys(vm), func(s string) {}),
 		view:     widget.NewMultiLineEntry(),
 		status:   widget.NewLabel("status..."),
 		progress: widget.NewProgressBarInfinite(),
 		list:     vm,
+		conn:     conn{},
 	}
 
-	ui.menu.OnChanged = func(s string) { ui.getView(s) }
+	ui.menu.OnChanged = func(s string) {
+
+		ui.progress_show("Attempting to run remote commands...")
+
+		// No host we probably have no client remember to set this
+		if ui.conn.host == "" {
+			ui.set_error("host not set, probably no client connection")
+			return
+		}
+
+		result, err := ui.conn.output(ui.list[s])
+		if err != nil {
+			ui.err = err
+			err_text := fmt.Sprintf("failed: \"%s\"", ui.list[s])
+			ui.set_error(err_text)
+			ui.progress_hide(err_text)
+			ui.view.SetText("")
+			ui.view.Disable()
+			return
+		}
+
+		ui.view.SetText(result)
+		ui.view.Enable()
+		ui.progress_hide("command ran successfully")
+
+	}
+
 	ui.view.TextStyle = fyne.TextStyle{Monospace: true}
 	ui.view.Disable()
 	ui.progress.Hidden = true

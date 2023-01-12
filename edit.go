@@ -1,16 +1,13 @@
 package main
 
 import (
+	"errors"
 	"fmt"
-	"os"
-	"strings"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
-	"github.com/povsister/scp"
-	"golang.org/x/crypto/ssh"
 	"golang.org/x/exp/maps"
 )
 
@@ -30,220 +27,138 @@ func default_edit_map() map[string]emi {
 	return m
 }
 
-type edit struct {
+type edit_ui struct {
 	menu      *widget.Select
 	save      *widget.Button
 	view      *widget.Entry
 	status    *widget.Label
 	progress  *widget.ProgressBarInfinite
 	container *fyne.Container
-	ssh       *ssh.Client
-	scp       *scp.Client
+	conn      conn
 	list      map[string]emi
-	connected string
 	text      string
 	err       error
 }
 
-func (ui *edit) SetStatus(s string) {
+func (ui *edit_ui) set_status(s string) {
 	if s != "" {
 		ui.status.SetText(s)
 	}
 }
 
-func (ui *edit) ProcessStart(s string) {
-	ui.SetStatus(s)
+func (ui *edit_ui) set_error(s string) {
+	ui.err = errors.New(s)
+	ui.status.SetText(s)
+}
+
+func (ui *edit_ui) progress_show(s string) {
+	ui.set_status(s)
 	ui.progress.Show()
 }
 
-func (ui *edit) ProcessEnd(s string) {
-	ui.SetStatus(s)
-	ui.progress.Hidden = true
+func (ui *edit_ui) progress_hide(s string) {
+	ui.set_status(s)
+	ui.progress.Hide()
 }
 
-func (ui *edit) getEdit(s string) {
-
-	ui.ProcessStart("Attempting to load remote file...")
-
-	// No host we probably have no client remember to set this
-	if ui.connected == "" {
-		ui.ProcessEnd("No ssh client")
-		return
-	}
-
-	// open a client connection
-	sess, err := ui.ssh.NewSession()
-	if err != nil {
-		ui.err = err
-		ui.ProcessEnd("Failed to create session")
-		return
-	}
-	defer sess.Close()
-	ui.SetStatus("New Session")
-
-	// run cat command
-	// cat filename
-	// where filename is e.list[s]
-	result, err := sess.Output(fmt.Sprintf(
-		"cat \"%s\"",
-		ui.list[s].path),
-	)
-	if err != nil {
-		ui.err = err
-		ui.ProcessEnd(fmt.Sprintf(
-			"failed: cat \"%s\"",
-			ui.list[s].path),
-		)
-		return
-	}
-	// file was loaded successfully
-
-	// reader := strings.newwri(ui.view.Text)
-	// err := ui.scp.CopyToRemote(
-	// 	reader,
-	// 	ui.list[ui.menu.Selected].path,
-	// 	&scp.FileTransferOption{},
-	// )
-	// if err != nil {
-	// 	fmt.Println("scp did not work" + err.Error())
-	// 	ui.SetStatus("scp did not work" + err.Error())
-	// } else {
-	// 	ui.SetStatus("yay scp worked successfully")
-	// }
-
-	ui.text = string(result)
-	ui.view.SetText(ui.text)
-	ui.view.Enable()
-	ui.save.Disable()
-	ui.ProcessEnd(fmt.Sprintf(
-		"success: cat \"%s\"",
-		ui.list[s].path),
-	)
-}
-
-func (ui *edit) saveEdit() {
-
-	ui.ProcessStart("Attempting to save to remote file...")
-
-	// No host we probably have no client remember to set this
-	if ui.connected == "" {
-		ui.ProcessEnd("No ssh client")
-		return
-	}
-
-	// // open a client connection
-	// sess1, err := ui.ssh.NewSession()
-	// if err != nil {
-	// 	ui.err = err
-	// 	ui.ProcessEnd("Failed to create session")
-	// 	return
-	// }
-	// defer sess1.Close()
-	// ui.SetStatus("New Session")
-
-	// // stdin pipe
-	// w, err := sess1.StdinPipe()
-	// if err != nil {
-	// 	ui.err = err
-	// 	ui.ProcessEnd("unable to open StdinPipe")
-	// 	return
-	// }
-	// ui.SetStatus("stdinPipe opened successfully")
-	// defer w.Close()
-
-	// // echo to remote file
-	// err = sess1.Start(fmt.Sprintf(
-	// 	"cat > \"%s\"",
-	// 	ui.list[ui.menu.Selected].path),
-	// )
-	// if err != nil {
-	// 	ui.err = err
-	// 	ui.ProcessEnd("unable to stream buffer to remote file")
-	// 	return
-	// }
-
-	// // write the textentry contents to the pipe
-	// i, err := fmt.Fprintf(w, ui.view.Text)
-	// if err != nil {
-	// 	ui.err = err
-	// 	ui.ProcessEnd("could not write to StdinPipe")
-	// 	return
-	// }
-
-	// // what do I do with this ?
-	// fmt.Println(i)
-
-	reader := strings.NewReader(ui.view.Text)
-	err := ui.scp.CopyToRemote(
-		reader,
-		ui.list[ui.menu.Selected].path,
-		&scp.FileTransferOption{},
-	)
-	if err != nil {
-		fmt.Println("scp did not work" + err.Error())
-		ui.SetStatus("scp did not work" + err.Error())
-	} else {
-		ui.SetStatus("yay scp worked successfully")
-	}
-
-	ui.text = ui.view.Text
-
-	ui.SetStatus(fmt.Sprintf(
-		"successfully saved \"%s\"",
-		ui.list[ui.menu.Selected].path,
-	))
-
-	if ui.list[ui.menu.Selected].cmd != "" {
-
-		// open another client session
-		sess2, err := ui.ssh.NewSession()
-		if err != nil {
-			ui.err = err
-			ui.ProcessEnd("Failed to create session")
-			ui.progress.Hide()
-			return
-		}
-		defer sess2.Close()
-		ui.SetStatus("New Session")
-
-		sess2.Stdout = os.Stdout
-		sess2.Stderr = os.Stderr
-
-		// run command associated with saving file
-		err = sess2.Run(ui.list[ui.menu.Selected].cmd)
-		if err != nil {
-			ui.err = err
-			ui.ProcessEnd(fmt.Sprintf(
-				"failed running \"%s\"",
-				ui.list[ui.menu.Selected].cmd,
-			))
-			return
-		}
-		ui.ProcessEnd(fmt.Sprintf(
-			"successfully saved \"%s\" and ran \"%s\"",
-			ui.list[ui.menu.Selected].path,
-			ui.list[ui.menu.Selected].cmd,
-		))
-
-	}
-
-}
-
-func NewEdit() *edit {
+func new_edit_ui() *edit_ui {
 
 	em := default_edit_map()
 
-	ui := &edit{
+	ui := &edit_ui{
 		menu:     widget.NewSelect(maps.Keys(em), func(s string) {}),
 		save:     widget.NewButton("Save", func() {}),
 		view:     widget.NewMultiLineEntry(),
 		status:   widget.NewLabel("status..."),
 		progress: widget.NewProgressBarInfinite(),
 		list:     em,
+		conn:     conn{},
 	}
 
-	ui.menu.OnChanged = func(s string) { ui.getEdit(s) }
-	ui.save.OnTapped = func() { ui.saveEdit() }
+	ui.menu.OnChanged = func(s string) {
+
+		var err error
+
+		ui.progress_show("Attempting to load remote file...")
+
+		// No host we probably have no client remember to set this
+		if ui.conn.host == "" {
+			error_text := "fail: No ssh client"
+			ui.set_error(error_text)
+			ui.progress_hide(error_text)
+			return
+		}
+
+		ui.text, err = ui.conn.get_content(ui.list[s].path)
+		if err != nil {
+			error_text := fmt.Sprintf(
+				"fail: scp %s : %s", ui.list[s].path, err.Error())
+			ui.set_error(error_text)
+			ui.progress_hide(error_text)
+			return
+		}
+
+		ui.progress_hide(fmt.Sprintf("success: scp %s", ui.list[s].path))
+
+		ui.view.SetText(ui.text)
+		ui.view.Enable()
+		ui.save.Disable()
+
+	}
+
+	ui.save.OnTapped = func() {
+
+		// var err error
+
+		ui.progress_show("Attempting to save remote file...")
+
+		// No host we probably have no client remember to set this
+		if ui.conn.host == "" {
+			error_text := "fail: No ssh client"
+			ui.set_error(error_text)
+			ui.progress_hide(error_text)
+			return
+		}
+
+		err := ui.conn.set_content(
+			ui.view.Text, ui.list[ui.menu.Selected].path)
+		if err != nil {
+			error_text := "failed: set_content: " + err.Error()
+			ui.set_error(error_text)
+			ui.progress_hide(error_text)
+			return
+		}
+
+		ui.text = ui.view.Text
+
+		ui.set_status(fmt.Sprintf(
+			"successfully saved \"%s\"", ui.list[ui.menu.Selected].path))
+
+		if ui.list[ui.menu.Selected].cmd != "" {
+
+			// run command associated with saving file
+			err = ui.conn.run(ui.list[ui.menu.Selected].cmd)
+			if err != nil {
+				error_text := fmt.Sprintf(
+					"failed running \"%s\"", ui.list[ui.menu.Selected].cmd)
+				ui.set_error(error_text)
+				ui.progress_hide(error_text)
+			}
+			ui.progress_hide(fmt.Sprintf(
+				"success: saved \"%s\" and ran \"%s\"",
+				ui.list[ui.menu.Selected].path,
+				ui.list[ui.menu.Selected].cmd,
+			))
+
+		}
+
+		ui.progress_hide(fmt.Sprintf(
+			"success: saved \"%s\"",
+			ui.list[ui.menu.Selected].path,
+		))
+
+	}
+
 	ui.view.TextStyle = fyne.TextStyle{Monospace: true}
 	ui.view.Disable()
 	ui.save.Disable()
